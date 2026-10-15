@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: Copyright (C) 2021-2026 Software Radio Systems Limited
+# SPDX-FileCopyrightText: Copyright (C) 2026 OCUDU contributors
+# SPDX-License-Identifier: BSD-3-Clause-Open-MPI
+
+# Compilation test: builds the plugin inside an OCUDU checkout and links a split 6 application against it.
+
+variables:
+  # OCUDU repository and branch/tag the plugin is built against.
+  OCUDU_REPO: https://gitlab.com/ocudu/ocudu.git
+  OCUDU_REF: main
+  # OCUDU builder image, it contains all the OCUDU build dependencies.
+  BUILDER_IMAGE: registry.gitlab.com/ocudu/ocudu/builder-ubuntu-24.04:2026.10.02
+  # Plugin targets, plus a split 6 application to check that the plugin links.
+  BUILD_TARGETS: fapi_vendor_adaptor ocudu_split6_plugin_vendor odu_split_6
+
+build:
+  image: ${BUILDER_IMAGE}
+  timeout: 2h
+  variables:
+    GIT_DEPTH: "1"
+    OCUDU_DIR: /tmp/ocudu
+    CCACHE_DIR: ${CI_PROJECT_DIR}/.ccache
+    CCACHE_MAXSIZE: 2G
+  cache:
+    key: ccache-${OCUDU_REF}
+    paths: [.ccache]
+  script:
+    # OCUDU builds every directory found under '<ocudu>/plugins/'.
+    - git clone --depth 1 --branch "${OCUDU_REF}" "${OCUDU_REPO}" "${OCUDU_DIR}"
+    - mkdir -p "${OCUDU_DIR}/plugins"
+    - ln -s "${CI_PROJECT_DIR}" "${OCUDU_DIR}/plugins/${CI_PROJECT_NAME}"
+    - cmake -S "${OCUDU_DIR}" -B "${OCUDU_DIR}/build" -G Ninja
+      -DCMAKE_BUILD_TYPE=Release -DMARCH=x86-64-v3 -DBUILD_TESTING=OFF
+      -DENABLE_UHD=OFF -DENABLE_ZEROMQ=OFF -DENABLE_DPDK=OFF
+      -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache | tee cmake.log
+    - 'grep -q "Adding plugin: plugins/${CI_PROJECT_NAME}" cmake.log'
+    - cmake --build "${OCUDU_DIR}/build" --parallel "$(nproc)" --target ${BUILD_TARGETS}
+    - ccache --show-stats
